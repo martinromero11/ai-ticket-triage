@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ticket Triage</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #fff; --text: #1d2330; --muted: #6b7280; --line: #e3e6eb;
+    --accent: #2f5bd3; --urgent: #c62828; --high: #e8710a; --medium: #b08900; --low: #2e7d32;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 system-ui, -apple-system, Segoe UI, sans-serif; background: var(--bg); color: var(--text); }
+  header { display: flex; align-items: center; gap: 16px; padding: 14px 20px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-size: 17px; margin: 0; }
+  .stats { display: flex; gap: 18px; color: var(--muted); font-size: 13px; flex-wrap: wrap; }
+  .stats b { color: var(--text); }
+  main { display: grid; grid-template-columns: minmax(320px, 1fr) minmax(360px, 1.2fr); gap: 16px; padding: 16px 20px; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
+  .filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  select, input, textarea, button { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: var(--text); }
+  input[type=search] { flex: 1; min-width: 140px; }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font-weight: 600; color: var(--muted); font-size: 12px; padding: 6px; border-bottom: 1px solid var(--line); }
+  td { padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr.row { cursor: pointer; }
+  tr.row:hover, tr.row.sel { background: #eef2fc; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; color: #fff; }
+  .p-urgent { background: var(--urgent); } .p-high { background: var(--high); }
+  .p-medium { background: var(--medium); } .p-low { background: var(--low); }
+  .tag { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 12px; background: #eceff4; }
+  .tag.fallback { background: #fdecea; color: var(--urgent); }
+  .tag.llm { background: #e7f0ff; color: var(--accent); }
+  .muted { color: var(--muted); font-size: 12px; }
+  .body { white-space: pre-wrap; background: var(--bg); padding: 10px; border-radius: 6px; }
+  .actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin: 12px 0; }
+  .actions label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+  .run { border: 1px solid var(--line); border-radius: 6px; padding: 8px; margin-top: 8px; }
+  .err { color: var(--urgent); font-size: 12px; margin-top: 4px; }
+  details summary { cursor: pointer; font-weight: 600; margin: 8px 0; }
+  form.new { display: grid; gap: 8px; }
+  h2 { font-size: 15px; margin: 0 0 8px; }
+  h3 { font-size: 13px; margin: 16px 0 4px; }
+  .empty { color: var(--muted); padding: 30px; text-align: center; }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 12px; }
+  .tab { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 8px 12px; color: var(--muted); font-weight: 600; }
+  .tab.on { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab .n { display: inline-block; min-width: 20px; margin-left: 4px; padding: 0 6px; border-radius: 10px; background: #eceff4; color: var(--text); font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Support Ticket Triage</h1>
+  <div class="stats" id="stats"></div>
+</header>
+
+<main>
+  <section class="panel">
+    <div class="tabs">
+      <button class="tab on" data-view="active">Active<span class="n" id="n-active">0</span></button>
+      <button class="tab" data-view="resolved">Resolved<span class="n" id="n-resolved">0</span></button>
+      <button class="tab" data-view="all">All<span class="n" id="n-all">0</span></button>
+    </div>
+    <div class="filters">
+      <input type="search" id="q" placeholder="Search tickets">
+      <select id="f-status"></select>
+      <select id="f-priority"><option value="">All priorities</option><option>urgent</option><option>high</option><option>medium</option><option>low</option></select>
+      <select id="f-category"><option value="">All categories</option><option>billing</option><option>technical</option><option>account</option><option>bug</option><option value="feature_request">feature request</option><option>general</option></select>
+      <select id="f-sort"><option value="priority">Sort: priority</option><option value="newest">Sort: newest</option><option value="oldest">Sort: oldest</option></select>
+    </div>
+    <table>
+      <thead><tr><th>#</th><th>Ticket</th><th>Priority</th><th>Status</th></tr></thead>
+      <tbody id="list"></tbody>
+    </table>
+
+    <details>
+      <summary>Submit a test ticket</summary>
+      <form class="new" id="new">
+        <input name="customer_email" type="email" placeholder="customer@example.com" required>
+        <input name="subject" placeholder="Subject" required>
+        <textarea name="body" rows="4" placeholder="Describe the issue" required></textarea>
+        <button class="primary">Submit and triage</button>
+      </form>
+    </details>
+  </section>
+
+  <section class="panel" id="detail"><div class="empty">Select a ticket to review it.</div></section>
+</main>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const when = (d) => new Date(d).toLocaleString();
+let selected = null;
+let view = "active";
+const VIEW_STATUSES = {
+  active: ["open", "in_progress"],
+  resolved: ["resolved", "closed"],
+  all: ["open", "in_progress", "resolved", "closed"],
+};
+
+function setStatusOptions() {
+  $("#f-status").innerHTML = `<option value="">All statuses</option>` +
+    VIEW_STATUSES[view].map((s) => `<option value="${s}">${s.replace("_", " ")}</option>`).join("");
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
+  return res.status === 204 ? null : res.json();
+}
+
+async function loadStats() {
+  const s = await api("/stats");
+  const open = (s.by_status.open || 0) + (s.by_status.in_progress || 0);
+  $("#n-active").textContent = open;
+  $("#n-resolved").textContent = (s.by_status.resolved || 0) + (s.by_status.closed || 0);
+  $("#n-all").textContent = s.total;
+  $("#stats").innerHTML =
+    `<span><b>${s.total}</b> total</span><span><b>${open}</b> active</span>` +
+    `<span><b>${s.by_priority.urgent || 0}</b> urgent</span>` +
+    `<span><b>${s.unassigned_open}</b> unassigned</span>` +
+    `<span><b>${Math.round(s.fallback_rate * 100)}%</b> fallback rate</span>`;
+}
+
+async function loadList() {
+  const p = new URLSearchParams({ view, sort: $("#f-sort").value, limit: 100 });
+  for (const [k, id] of [["status", "#f-status"], ["priority", "#f-priority"], ["category", "#f-category"], ["q", "#q"]])
+    if ($(id).value) p.set(k, $(id).value);
+  const rows = await api("/tickets?" + p);
+  $("#list").innerHTML = rows.length ? rows.map((t) => `
+    <tr class="row ${t.id === selected ? "sel" : ""}" data-id="${t.id}">
+      <td>${t.id}</td>
+      <td><div>${esc(t.subject)}</div><div class="muted">${esc(t.category.replace("_", " "))} · ${esc(t.assignee || "unassigned")}</div></td>
+      <td><span class="pill p-${t.priority}">${t.priority}</span></td>
+      <td>${t.status.replace("_", " ")}</td>
+    </tr>`).join("") : `<tr><td colspan="4" class="empty">${view === "resolved" ? "No resolved tickets yet." : "No tickets match."}</td></tr>`;
+  document.querySelectorAll("tr.row").forEach((r) => r.onclick = () => showTicket(+r.dataset.id));
+}
+
+function opts(values, current) {
+  return values.map((v) => `<option value="${v}" ${v === current ? "selected" : ""}>${v.replace("_", " ")}</option>`).join("");
+}
+
+async function showTicket(id) {
+  selected = id;
+  const t = await api(`/tickets/${id}`);
+  const runs = [...t.triage_results].reverse().map((r) => `
+    <div class="run">
+      <span class="tag ${r.source}">${r.source}</span>
+      <span class="muted">${esc(r.model || "rules")} · ${when(r.created_at)}${r.confidence != null ? ` · confidence ${r.confidence.toFixed(2)}` : ""}</span>
+      <div>${esc(r.summary)}</div>
+      <div class="muted">${r.category} / ${r.priority}</div>
+      ${r.error ? `<div class="err">${esc(r.error)}</div>` : ""}
+    </div>`).join("");
+  const history = t.status_updates.length ? t.status_updates.map((u) =>
+    `<div class="muted">${when(u.created_at)}: ${u.field} ${esc(u.old_value || "none")} → ${esc(u.new_value || "none")}${u.note ? ` (${esc(u.note)})` : ""}</div>`).join("") : `<div class="muted">No changes yet.</div>`;
+
+  $("#detail").innerHTML = `
+    <h2>#${t.id} ${esc(t.subject)}</h2>
+    <div class="muted">${esc(t.customer_email)} · ${when(t.created_at)}</div>
+    <h3>AI summary</h3><div>${esc(t.summary)}</div>
+    <div class="actions">
+      <label>Status<select id="a-status">${opts(["open", "in_progress", "resolved", "closed"], t.status)}</select></label>
+      <label>Priority<select id="a-priority">${opts(["urgent", "high", "medium", "low"], t.priority)}</select></label>
+      <label>Category<select id="a-category">${opts(["billing", "technical", "account", "bug", "feature_request", "general"], t.category)}</select></label>
+      <label>Assignee<input id="a-assignee" value="${esc(t.assignee || "")}" placeholder="agent name"></label>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="primary" id="save">Save changes</button>
+      <button id="retriage">Re-run triage</button>
+    </div>
+    <h3>Original message</h3><div class="body">${esc(t.body)}</div>
+    <h3>Model output</h3>${runs}
+    <h3>History</h3>${history}`;
+
+  $("#save").onclick = async () => {
+    const assignee = $("#a-assignee").value.trim() || null;
+    if (assignee !== t.assignee) await api(`/tickets/${id}/assign`, { method: "POST", body: JSON.stringify({ assignee }) });
+    await api(`/tickets/${id}`, { method: "PATCH", body: JSON.stringify({
+      status: $("#a-status").value, priority: $("#a-priority").value, category: $("#a-category").value, note: "dashboard edit" }) });
+    refresh();
+  };
+  $("#retriage").onclick = async () => { await api(`/tickets/${id}/retriage`, { method: "POST" }); refresh(); };
+  loadList();
+}
+
+async function refresh() {
+  await Promise.all([loadStats(), loadList()]);
+  if (selected) showTicket(selected);
+}
+
+$("#new").onsubmit = async (e) => {
+  e.preventDefault();
+  const t = await api("/tickets", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(e.target))) });
+  e.target.reset();
+  selected = t.id;
+  refresh();
+};
+
+let timer;
+$("#q").oninput = () => { clearTimeout(timer); timer = setTimeout(loadList, 250); };
+["#f-status", "#f-priority", "#f-category", "#f-sort"].forEach((s) => $(s).onchange = loadList);
+document.querySelectorAll(".tab").forEach((b) => b.onclick = () => {
+  view = b.dataset.view;
+  document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("on", x === b));
+  setStatusOptions();
+  loadList();
+});
+setStatusOptions();
+refresh();
+</script>
+</body>
+</html>
